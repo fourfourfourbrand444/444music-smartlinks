@@ -1,0 +1,38 @@
+name: Keep Scheduled Workflows Active
+
+# Scheduled workflows in a public repo are switched off after 60 days with
+# no repository activity. This checks once a week and, only if the last
+# commit is 40+ days old, pushes one empty commit to reset the clock.
+# It never touches your other workflows or any of your files.
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"   # every Monday, 03:00 UTC
+  workflow_dispatch:       # lets you run it by hand from the Actions tab
+
+permissions:
+  contents: write          # needed only to push the empty commit
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Push an empty commit if the repo has gone quiet
+        run: |
+          last=$(git log -1 --format=%ct)
+          now=$(date +%s)
+          age_days=$(( (now - last) / 86400 ))
+          echo "Last commit is ${age_days} day(s) old."
+
+          if [ "$age_days" -ge 40 ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "chore: keep scheduled workflows active"
+            git push
+            echo "Pushed an empty commit."
+          else
+            echo "Recent activity found. Nothing to do."
+          fi
