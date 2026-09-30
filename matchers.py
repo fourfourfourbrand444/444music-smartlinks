@@ -4,8 +4,8 @@ looking for". Every platform search function returns candidates that get
 scored here before anything is written back to Firestore.
 """
 import re
+from datetime import date, datetime
 from rapidfuzz import fuzz
-
 
 def _normalize(text: str) -> str:
     """Strip things that legitimately differ between platforms without
@@ -22,7 +22,6 @@ def _normalize(text: str) -> str:
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
-
 def match_confidence(target_artist: str, target_title: str,
                       candidate_artist: str, candidate_title: str) -> float:
     """Returns 0-100. Weighted toward title match since artist names
@@ -34,7 +33,6 @@ def match_confidence(target_artist: str, target_title: str,
     title_score = fuzz.token_sort_ratio(t1, t2)
 
     return round((artist_score * 0.35) + (title_score * 0.65), 1)
-
 
 def best_match(target_artist: str, target_title: str, candidates: list):
     """candidates: list of dicts with 'artist', 'title', 'url' (plus
@@ -49,7 +47,6 @@ def best_match(target_artist: str, target_title: str, candidates: list):
     ]
     scored.sort(key=lambda pair: pair[1], reverse=True)
     return scored[0]
-
 
 def match_confidence_noisy(target_artist: str, target_title: str,
                             candidate_artist: str, candidate_title: str) -> float:
@@ -71,7 +68,6 @@ def match_confidence_noisy(target_artist: str, target_title: str,
 
     return round((artist_score * 0.35) + (title_score * 0.65), 1)
 
-
 def best_match_noisy(target_artist: str, target_title: str, candidates: list):
     """Same contract as best_match, but scores with match_confidence_noisy.
     Use this for scrapers whose candidate labels come from a fallback
@@ -85,3 +81,53 @@ def best_match_noisy(target_artist: str, target_title: str, candidates: list):
     ]
     scored.sort(key=lambda pair: pair[1], reverse=True)
     return scored[0]
+
+
+# ── Strict checks used ONLY for Spotify ──────────────────────────────
+
+def title_similarity(target_title: str, candidate_title: str) -> float:
+    """Title-only similarity, 0-100. Unlike match_confidence this does
+    not blend in the artist score, so a good artist can't rescue a bad
+    title (or the other way round)."""
+    return float(fuzz.token_sort_ratio(_normalize(target_title), _normalize(candidate_title)))
+
+def artist_matches(target_artist: str, candidate_artists: list, min_score: int = 85) -> bool:
+    """True only if the release's main artist is one of the artists on
+    the candidate. A wrong song by a different artist can't pass this,
+    whatever its title score."""
+    t = _normalize(target_artist)
+    if not t:
+        return False
+    return any(
+        fuzz.token_sort_ratio(t, _normalize(a)) >= min_score
+        for a in (candidate_artists or [])
+    )
+
+_DATE_RE = re.compile(r"^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?$")
+
+def parse_date(value):
+    """Accepts '2026-09-30T00:00:00.000Z', '2026-09-30', '2026-09' or
+    '2026' (Spotify sometimes only gives month/year). Returns a date,
+    or None if it can't be read."""
+    if not value:
+        return None
+    s = str(value).strip()
+    m = _DATE_RE.match(s)
+    try:
+        if m:
+            y = int(m.group(1))
+            mo = int(m.group(2) or 1)
+            d = int(m.group(3) or 1)
+            return date(y, mo, d)
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+def dates_close(release_date, candidate_date, tolerance_days: int) -> bool:
+    """True if both dates are readable and within tolerance_days of each
+    other. If either can't be read this returns False — the caller is
+    checking a new release, so 'can't verify' means 'don't trust it'."""
+    a, b = parse_date(release_date), parse_date(candidate_date)
+    if not a or not b:
+        return False
+    return abs((a - b).days) <= tolerance_days
