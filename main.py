@@ -11,10 +11,12 @@ your admin panel's manual entry writes to.
 Platforms already confirmed for a release are never re-searched, so
 runs get faster over time as more releases fill in completely.
 
-Spotify is handled by the Spotify Web API (UPC lookup first, strict
-artist/title/release-date name check as a fallback) — see
-api_searchers.search_spotify. It no longer goes through Selenium, so no
-browser is started by this script. Every Spotify decision is printed.
+Spotify is handled per config.SPOTIFY_METHOD: "scraper" (default — the
+public Spotify web search page via the browser, accepted only when the
+artist AND a 60%+ title match, see scrapers.search_spotify) or "api"
+(Spotify Web API, UPC first; needs a Premium developer-app owner). The
+browser is only started when a Spotify search actually needs it. Every
+Spotify decision is printed.
 
 Each release is processed in its own try/except: if something
 unexpected blows up partway through one release, that release is logged
@@ -31,7 +33,9 @@ from urllib.parse import quote
 
 import config
 import firestore_sync
-from api_searchers import search_deezer, search_apple_music, search_youtube, search_spotify
+from api_searchers import search_deezer, search_apple_music, search_youtube
+from api_searchers import search_spotify as search_spotify_api
+import scrapers
 
 # Deezer/Apple/YouTube were firing back-to-back with zero pacing across
 # every release — fine at small batch sizes, but iTunes' Search API in
@@ -73,7 +77,25 @@ def run():
 
     flagged = []   # (release_label, field, reason)
     crashed = []   # (release_label, error)
+    browser = {"driver": None}
 
+    def get_driver():
+        # Started only when a Spotify scraper search actually needs it.
+        if browser["driver"] is None:
+            from browser import make_driver
+            browser["driver"] = make_driver()
+        return browser["driver"]
+
+    try:
+        _process(releases, flagged, crashed, get_driver)
+    finally:
+        if browser["driver"] is not None:
+            browser["driver"].quit()
+
+    _print_report(flagged, crashed)
+
+
+def _process(releases, flagged, crashed, get_driver):
     for i, release in enumerate(releases, 1):
         artist, title = release["artist"], release["title"]
         label = f"{artist} — {title}"
@@ -86,14 +108,26 @@ def run():
             found = {}
             spotify_meta = None
 
-            # ── Spotify (Web API: UPC first, strict name fallback) ──
+            # ── Spotify (method set by config.SPOTIFY_METHOD) ───────
             if "spotify" in missing:
-                result = search_spotify(
-                    artist, title,
-                    upc=release.get("upc", ""),
-                    release_date=release.get("releaseDate", ""),
-                    previously_released=release.get("previouslyReleased", ""),
-                )
+                result = None
+                if config.SPOTIFY_METHOD == "api":
+                    result = search_spotify_api(
+                        artist, title,
+                        upc=release.get("upc", ""),
+                        release_date=release.get("releaseDate", ""),
+                        previously_released=release.get("previouslyReleased", ""),
+                    )
+                else:
+                    for attempt in range(config.RETRIES_PER_PLATFORM + 1):
+                        try:
+                            result = scrapers.search_spotify(get_driver(), artist, title)
+                            break
+                        except Exception as e:
+                            if attempt < config.RETRIES_PER_PLATFORM:
+                                time.sleep(2)
+                                continue
+                            print(f"    spotify      ERROR — {e}")
                 if result and result["url"] != release.get("spotifyUrl", ""):
                     found["spotify"] = result["url"]
                     spotify_meta = {
@@ -111,7 +145,7 @@ def run():
                     else:
                         flagged.append((label, "spotify", "no confirmed match — left blank"))
                         print("    spotify      no confirmed match — left blank")
-                time.sleep(API_DELAY_SECONDS)
+                time.sleep(config.SEARCH_DELAY_SECONDS if config.SPOTIFY_METHOD != "api" else API_DELAY_SECONDS)
 
             # ── Other API-based platforms (reliable) ────────────────
             if "deezer" in missing:
@@ -172,8 +206,6 @@ def run():
             print(f"    ✗ release crashed, skipping — {e}\n")
             crashed.append((label, str(e)))
             continue
-
-    _print_report(flagged, crashed)
 
 
 def _record(found: dict, flagged: list, label: str, platform: str, result):
