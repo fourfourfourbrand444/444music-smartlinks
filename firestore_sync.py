@@ -179,7 +179,7 @@ def get_releases_needing_smartlinks():
                 "previouslyReleased": data.get("previouslyReleased", ""),
                 "spotifyUrl": _spotify_url(data),
                 "recheck": recheck,
-                "recheck_only": skipped and recheck,
+                "recheck_only": skipped,
             })
     return releases
 
