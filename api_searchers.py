@@ -3,8 +3,12 @@ Searchers for platforms that have a free public API — no Selenium, no
 login, no anti-bot fights. These are the most reliable part of the whole
 pipeline; if a platform is here, trust it more than the scrapers.
 """
+import time
 import requests
-from matchers import best_match, best_match_noisy
+from matchers import (
+    best_match, best_match_noisy,
+    title_similarity, artist_matches, dates_close,
+)
 import config
 
 
@@ -130,4 +134,156 @@ def search_youtube(artist: str, title: str):
             return {"url": match["url"], "confidence": confidence}
     except Exception as e:
         print(f"  [youtube] search failed: {e}")
+    return None
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Spotify Web API (Client Credentials)
+#
+# Order of attack:
+#   1. UPC lookup (q=upc:<code>, type=album). Exact release or nothing.
+#      If the release isn't on Spotify yet this returns nothing and we
+#      fall through — we never guess from a UPC.
+#   2. Name search fallback, accepted ONLY if ALL of these pass:
+#        - the release's main artist is one of the artists on the result
+#        - title similarity >= config.SPOTIFY_TITLE_MIN
+#        - for new releases (previouslyReleased "No"): Spotify's release
+#          date is within config.SPOTIFY_DATE_TOLERANCE_DAYS of ours
+#
+# Every candidate and decision is printed so a wrong link can be traced
+# to the exact check that let it through.
+# ═══════════════════════════════════════════════════════════════════════
+
+_spotify_token = {"value": None, "expires": 0.0}
+
+
+def _get_spotify_token():
+    if not (config.SPOTIFY_CLIENT_ID and config.SPOTIFY_CLIENT_SECRET):
+        return None
+    if _spotify_token["value"] and time.time() < _spotify_token["expires"] - 60:
+        return _spotify_token["value"]
+    resp = requests.post(
+        "https://accounts.spotify.com/api/token",
+        data={"grant_type": "client_credentials"},
+        auth=(config.SPOTIFY_CLIENT_ID, config.SPOTIFY_CLIENT_SECRET),
+        timeout=10,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    _spotify_token["value"] = data["access_token"]
+    _spotify_token["expires"] = time.time() + int(data.get("expires_in", 3600))
+    return _spotify_token["value"]
+
+
+def _spotify_get(path: str, params: dict):
+    token = _get_spotify_token()
+    if not token:
+        return None
+    resp = requests.get(
+        f"https://api.spotify.com/v1{path}",
+        headers={"Authorization": f"Bearer {token}"},
+        params=params,
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _spotify_by_upc(upc: str, title: str):
+    for market in config.SPOTIFY_MARKETS:
+        params = {"q": f"upc:{upc}", "type": "album", "limit": 1}
+        if market:
+            params["market"] = market
+        data = _spotify_get("/search", params)
+        items = ((data or {}).get("albums") or {}).get("items") or []
+        if not items:
+            continue
+
+        album = items[0]
+        album_artists = [a.get("name", "") for a in album.get("artists", [])]
+        print(f"    [spotify] UPC {upc} → album {album.get('name')!r} by {album_artists} "
+              f"(released {album.get('release_date')}, market {market or 'none'})")
+
+        # Turn the album into the specific track link (that's what the
+        # smart link stores). Singles have one track; for multi-track
+        # releases pick the best title match, else fall back to the album.
+        tparams = {"limit": 50}
+        if market:
+            tparams["market"] = market
+        tdata = _spotify_get(f"/albums/{album['id']}/tracks", tparams)
+        tracks = (tdata or {}).get("items") or []
+        best, best_score = None, -1.0
+        for t in tracks:
+            score = title_similarity(title, t.get("name", ""))
+            if score > best_score:
+                best, best_score = t, score
+
+        if best and (len(tracks) == 1 or best_score >= config.SPOTIFY_TITLE_MIN):
+            url = best["external_urls"]["spotify"]
+        else:
+            url = album["external_urls"]["spotify"]
+        return {"url": url.split("?")[0], "confidence": 100.0, "method": "upc"}
+
+    print(f"    [spotify] UPC {upc}: no album found (not on Spotify yet, or not available in the tried markets)")
+    return None
+
+
+def _spotify_by_name(artist: str, title: str, release_date: str, previously_released: str):
+    data = _spotify_get("/search", {"q": f"{title} {artist}", "type": "track", "limit": 10})
+    items = ((data or {}).get("tracks") or {}).get("items") or []
+    is_new = str(previously_released).strip().lower() == "no"
+    if not is_new:
+        print("    [spotify] not a new release — release-date check skipped (artist + title still required)")
+
+    passing = []
+    for item in items:
+        c_artists = [a.get("name", "") for a in item.get("artists", [])]
+        c_title = item.get("name", "")
+        c_date = (item.get("album") or {}).get("release_date", "")
+        t_score = title_similarity(title, c_title)
+
+        a_ok = artist_matches(artist, c_artists)
+        t_ok = t_score >= config.SPOTIFY_TITLE_MIN
+        d_ok = dates_close(release_date, c_date, config.SPOTIFY_DATE_TOLERANCE_DAYS) if is_new else True
+
+        failed = []
+        if not a_ok:
+            failed.append("artist")
+        if not t_ok:
+            failed.append("title")
+        if not d_ok:
+            failed.append("date")
+        verdict = "ACCEPT" if not failed else "reject (" + ", ".join(failed) + ")"
+        print(f"    [spotify] {c_artists} - {c_title!r} | title {t_score:.0f}% | "
+              f"released {c_date or '?'} | {verdict}")
+
+        if not failed:
+            passing.append((t_score, item))
+
+    if not passing:
+        return None
+    best_score, best_item = max(passing, key=lambda p: p[0])
+    return {
+        "url": best_item["external_urls"]["spotify"].split("?")[0],
+        "confidence": round(best_score, 1),
+        "method": "name",
+    }
+
+
+def search_spotify(artist: str, title: str, upc: str = "",
+                   release_date: str = "", previously_released: str = ""):
+    """Returns {"url", "confidence", "method"} for a confirmed match, or
+    None. None means 'nothing trustworthy found' — the caller leaves the
+    field blank."""
+    if not (config.SPOTIFY_CLIENT_ID and config.SPOTIFY_CLIENT_SECRET):
+        print("  [spotify] skipped — SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET not set")
+        return None
+    try:
+        if config.SPOTIFY_USE_UPC and str(upc).strip():
+            result = _spotify_by_upc(str(upc).strip(), title)
+            if result:
+                return result
+        return _spotify_by_name(artist, title, release_date, previously_released)
+    except Exception as e:
+        print(f"  [spotify] search failed: {e}")
     return None
