@@ -157,6 +157,14 @@ def search_youtube(artist: str, title: str):
 _spotify_token = {"value": None, "expires": 0.0}
 
 
+def _raise_for_spotify(resp):
+    """Like resp.raise_for_status(), but includes Spotify's own error
+    message in the log (a bare '403 Forbidden' doesn't say why)."""
+    if resp.status_code >= 400:
+        where = resp.url.split("?")[0]
+        raise RuntimeError(f"HTTP {resp.status_code} from {where} — {resp.text[:300]}")
+
+
 def _get_spotify_token():
     if not (config.SPOTIFY_CLIENT_ID and config.SPOTIFY_CLIENT_SECRET):
         return None
@@ -168,7 +176,7 @@ def _get_spotify_token():
         auth=(config.SPOTIFY_CLIENT_ID, config.SPOTIFY_CLIENT_SECRET),
         timeout=10,
     )
-    resp.raise_for_status()
+    _raise_for_spotify(resp)
     data = resp.json()
     _spotify_token["value"] = data["access_token"]
     _spotify_token["expires"] = time.time() + int(data.get("expires_in", 3600))
@@ -185,7 +193,7 @@ def _spotify_get(path: str, params: dict):
         params=params,
         timeout=10,
     )
-    resp.raise_for_status()
+    _raise_for_spotify(resp)
     return resp.json()
 
 
