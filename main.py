@@ -80,7 +80,7 @@ def run():
         missing = set(release.get("missing", []))
         recheck_only = release.get("recheck_only", False)
         print(f"[{i}/{len(releases)}] {label}  (missing: {', '.join(sorted(missing)) or 'none'})"
-              + ("  [Spotify re-check only]" if recheck_only else ""))
+              + ("  [Spotify-only pass]" if recheck_only else ""))
 
         try:
             found = {}
@@ -154,7 +154,7 @@ def run():
                     firestore_sync.record_attempt(release["id"], made_progress=True)
                 print(f"    → wrote {len(found)} link(s) to Firestore\n")
             elif recheck_only:
-                print("    → Spotify re-check: nothing to change\n")
+                print("    → Spotify-only pass: nothing to change\n")
             else:
                 firestore_sync.record_attempt(release["id"], made_progress=False)
                 new_attempts = release.get("attempts", 0) + 1
