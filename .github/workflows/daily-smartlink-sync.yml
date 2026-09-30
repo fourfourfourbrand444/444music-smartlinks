@@ -33,5 +33,7 @@ jobs:
       - name: Run smartlink sync
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
           FIREBASE_CREDENTIALS_PATH: firebase_credentials.json
         run: python main.py
