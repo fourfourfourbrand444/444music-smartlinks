@@ -12,6 +12,28 @@ FIRESTORE_COLLECTION = "submissions"
 # Reuse the same key your broadcast backend already uses for view counts.
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 
+# ── Spotify Web API (Client Credentials) ─────────────────────────────
+# Same Spotify developer app your backend already uses on Render. Set
+# both as environment variables / GitHub Actions secrets. Never hardcode.
+SPOTIFY_CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID", "")
+SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
+
+# Spotify-only matching rules (other stores are NOT affected by these).
+# 1) Look the release up by its UPC first (exact match or nothing).
+SPOTIFY_USE_UPC = True
+# Markets tried in order for the UPC lookup ("" = no market filter).
+SPOTIFY_MARKETS = ("", "GH", "US")
+# 2) Name-search fallback: title similarity must be at least this (0-100).
+SPOTIFY_TITLE_MIN = 60
+# 3) Name-search fallback, new releases only (previouslyReleased "No"):
+#    Spotify's release date must be within this many days of ours.
+SPOTIFY_DATE_TOLERANCE_DAYS = 14
+# Links the job found BY NAME are re-checked on each run for this many
+# days after the release date, and replaced if a better match appears.
+# Links found by UPC are exact and never re-checked. Links entered by
+# hand are never touched.
+SPOTIFY_RECHECK_DAYS = 30
+
 # ── Matching ──────────────────────────────────────────────────────────
 # 0-100. Below this, the field is left blank and the release is flagged
 # in the run report instead of writing a guessed link.
@@ -19,6 +41,7 @@ YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 # manual verification of real matches — this value is left at 72 here in
 # case anything else in the project reads config.CONFIDENCE_THRESHOLD
 # directly and should stay conservative.
+# (Spotify no longer uses this threshold — see the SPOTIFY_* settings.)
 CONFIDENCE_THRESHOLD = 72
 
 # ── Selenium ──────────────────────────────────────────────────────────
@@ -31,7 +54,7 @@ RETRIES_PER_PLATFORM = 1        # re-attempt once on timeout/stale element
 # Turn any of these off if one keeps breaking and you'd rather do it
 # manually for now — the rest keep running.
 ENABLED_PLATFORMS = {
-    "spotify": True,
+    "spotify": True,       # via Spotify Web API — UPC first, strict name fallback
     "appleMusic": True,   # via iTunes Search API — reliable
     "itunes": True,       # same API call as appleMusic, separate field
     "deezer": True,       # via Deezer public API — reliable
