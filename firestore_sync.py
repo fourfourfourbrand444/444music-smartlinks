@@ -21,6 +21,14 @@ smartLink.syncAttempts, so a permanently-stuck release (bad metadata,
 genuinely not on any platform, whatever the cause) doesn't get
 re-searched forever and crowd out newer releases. Any run that DOES
 confirm at least one new link resets the streak to 0.
+
+Spotify exception (the only one): a Spotify link this job wrote BY NAME
+is tagged in smartLink.spotifyAuto and is re-checked on every run for
+config.SPOTIFY_RECHECK_DAYS after the release date, so a better match
+(e.g. the exact UPC match once the real song is live) can replace it.
+Spotify links entered by hand, or found by UPC, are never overwritten.
+Such re-check-only releases never count toward the give-up streak and
+never trigger searches on any other platform.
 """
 from datetime import datetime, timezone
 import firebase_admin
@@ -71,17 +79,45 @@ def _sync_attempts(data: dict) -> int:
     return (data.get("smartLink") or {}).get("syncAttempts", 0)
 
 
-def _release_date_reached(data: dict) -> bool:
+def _parse_release_date(data: dict):
     release_date = data.get("releaseDate")
     if not release_date:
-        return True  # same conservative default as the admin panel's JS
+        return None
     try:
         rd = datetime.fromisoformat(str(release_date).replace("Z", "+00:00"))
     except ValueError:
-        return True
+        return None
     if rd.tzinfo is None:
         rd = rd.replace(tzinfo=timezone.utc)
+    return rd
+
+
+def _release_date_reached(data: dict) -> bool:
+    rd = _parse_release_date(data)
+    if rd is None:
+        return True  # same conservative default as the admin panel's JS
     return rd <= datetime.now(timezone.utc)
+
+
+def _spotify_url(data: dict) -> str:
+    stores = (data.get("smartLink") or {}).get("stores") or {}
+    return str(stores.get("spotify", "")).strip()
+
+
+def _spotify_recheck_due(data: dict) -> bool:
+    """True only for a Spotify link this job itself wrote by NAME, still
+    inside the re-check window. Hand-entered links (no spotifyAuto tag)
+    and UPC-exact links are never re-checked."""
+    if not config.ENABLED_PLATFORMS.get("spotify"):
+        return False
+    auto = (data.get("smartLink") or {}).get("spotifyAuto") or {}
+    if auto.get("method") != "name" or not _spotify_url(data):
+        return False
+    rd = _parse_release_date(data)
+    if rd is None:
+        return False
+    days_since = (datetime.now(timezone.utc) - rd).days
+    return days_since <= config.SPOTIFY_RECHECK_DAYS
 
 
 def get_releases_needing_smartlinks():
@@ -93,11 +129,22 @@ def get_releases_needing_smartlinks():
         data = doc.to_dict()
         if not _release_date_reached(data):
             continue
-        if _filled_count(data) >= 4:
-            continue  # already has 4+ links (manual or automatic) — skip entirely
-        if _sync_attempts(data) >= STALL_THRESHOLD_RUNS:
-            continue  # gave up on this one after repeated failed runs
-        missing = _missing_platforms(data)
+
+        recheck = _spotify_recheck_due(data)
+        skipped = (
+            _filled_count(data) >= 4                      # already has 4+ links
+            or _sync_attempts(data) >= STALL_THRESHOLD_RUNS  # gave up after repeated failed runs
+        )
+
+        if skipped:
+            if not recheck:
+                continue
+            missing = ["spotify"]  # re-check only; no other platform is searched
+        else:
+            missing = _missing_platforms(data)
+            if recheck and "spotify" not in missing:
+                missing.append("spotify")
+
         if missing:
             releases.append({
                 "id": doc.id,
@@ -105,18 +152,31 @@ def get_releases_needing_smartlinks():
                 "title": data.get("releaseTitle") or data.get("songTitle") or data.get("title") or "",
                 "missing": missing,
                 "attempts": _sync_attempts(data),
+                "upc": str(data.get("upc", "") or "").strip(),
+                "releaseDate": data.get("releaseDate", ""),
+                "previouslyReleased": data.get("previouslyReleased", ""),
+                "spotifyUrl": _spotify_url(data),
+                "recheck": recheck,
+                "recheck_only": skipped and recheck,
             })
     return releases
 
 
-def write_store_links(submission_id: str, store_links: dict):
+def write_store_links(submission_id: str, store_links: dict, spotify_meta: dict = None):
     """store_links: e.g. {"spotify": "...", "deezer": "..."} — only
     fields that were actually confirmed get passed in, so this never
-    overwrites an existing link with a blank."""
+    overwrites an existing link with a blank.
+
+    spotify_meta (only when store_links contains "spotify"): how that
+    link was found, e.g. {"method": "upc", "score": 100.0, "at": "..."},
+    saved to smartLink.spotifyAuto so future runs know the link is
+    job-written (and whether it's still worth re-checking)."""
     if not store_links:
         return
     db = init()
     update_data = {f"smartLink.stores.{k}": v for k, v in store_links.items()}
+    if spotify_meta and "spotify" in store_links:
+        update_data["smartLink.spotifyAuto"] = spotify_meta
     db.collection(config.FIRESTORE_COLLECTION).document(submission_id).update(update_data)
 
 
