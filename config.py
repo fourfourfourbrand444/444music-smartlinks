@@ -12,20 +12,29 @@ FIRESTORE_COLLECTION = "submissions"
 # Reuse the same key your broadcast backend already uses for view counts.
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 
-# ── Spotify Web API (Client Credentials) ─────────────────────────────
+# ── Spotify ───────────────────────────────────────────────────────────
+# "scraper" = Spotify's public web search page via the browser (works
+#             without Premium; artist + title must both match).
+# "api"     = Spotify Web API (UPC lookup + strict name search). Spotify
+#             currently refuses these calls with HTTP 403 unless the
+#             developer app's owner has an active Premium plan.
+SPOTIFY_METHOD = "scraper"
+
+# --- Only used when SPOTIFY_METHOD = "api" ---
 # Same Spotify developer app your backend already uses on Render. Set
 # both as environment variables / GitHub Actions secrets. Never hardcode.
 SPOTIFY_CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID", "")
 SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
 
 # Spotify-only matching rules (other stores are NOT affected by these).
-# 1) Look the release up by its UPC first (exact match or nothing).
+# 1) (api only) Look the release up by its UPC first (exact match or nothing).
 SPOTIFY_USE_UPC = True
 # Markets tried in order for the UPC lookup ("" = no market filter).
 SPOTIFY_MARKETS = ("", "GH", "US")
-# 2) Name-search fallback: title similarity must be at least this (0-100).
+# 2) Title similarity must be at least this (0-100). Used by BOTH methods;
+#    the release's main artist must also be on the result.
 SPOTIFY_TITLE_MIN = 60
-# 3) Name-search fallback, new releases only (previouslyReleased "No"):
+# 3) (api only) Name search, new releases only (previouslyReleased "No"):
 #    Spotify's release date must be within this many days of ours.
 SPOTIFY_DATE_TOLERANCE_DAYS = 14
 # Links the job found BY NAME are re-checked on each run for this many
@@ -54,7 +63,7 @@ RETRIES_PER_PLATFORM = 1        # re-attempt once on timeout/stale element
 # Turn any of these off if one keeps breaking and you'd rather do it
 # manually for now — the rest keep running.
 ENABLED_PLATFORMS = {
-    "spotify": True,       # via Spotify Web API — UPC first, strict name fallback
+    "spotify": True,       # see SPOTIFY_METHOD above (scraper by default)
     "appleMusic": True,   # via iTunes Search API — reliable
     "itunes": True,       # same API call as appleMusic, separate field
     "deezer": True,       # via Deezer public API — reliable
