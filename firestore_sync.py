@@ -29,6 +29,12 @@ config.SPOTIFY_RECHECK_DAYS after the release date, so a better match
 Spotify links entered by hand, or found by UPC, are never overwritten.
 Such re-check-only releases never count toward the give-up streak and
 never trigger searches on any other platform.
+
+Second Spotify exception: a recent release (within
+config.SPOTIFY_RECHECK_DAYS of its release date) that is skipped by the
+'4+ links' or give-up rules but still has NO Spotify link gets a
+Spotify-only pass, so it can pick up its Spotify link once the song is
+live. No other platform is searched for it.
 """
 from datetime import datetime, timezone
 import firebase_admin
@@ -120,6 +126,22 @@ def _spotify_recheck_due(data: dict) -> bool:
     return days_since <= config.SPOTIFY_RECHECK_DAYS
 
 
+def _spotify_fill_due(data: dict) -> bool:
+    """True when Spotify is still empty on a recent release. Used only
+    for releases the '4+ links' / give-up rules would otherwise skip
+    entirely: without this, a release that already has Apple, YouTube,
+    Tidal and Audiomack links would never get a Spotify search, even
+    after the real song goes live. Limited to the same window as the
+    re-check (config.SPOTIFY_RECHECK_DAYS after release)."""
+    if not config.ENABLED_PLATFORMS.get("spotify") or _spotify_url(data):
+        return False
+    rd = _parse_release_date(data)
+    if rd is None:
+        return False
+    days_since = (datetime.now(timezone.utc) - rd).days
+    return 0 <= days_since <= config.SPOTIFY_RECHECK_DAYS
+
+
 def get_releases_needing_smartlinks():
     db = init()
     docs = db.collection(config.FIRESTORE_COLLECTION).where("status", "==", "Approved").get()
@@ -137,9 +159,9 @@ def get_releases_needing_smartlinks():
         )
 
         if skipped:
-            if not recheck:
+            if not (recheck or _spotify_fill_due(data)):
                 continue
-            missing = ["spotify"]  # re-check only; no other platform is searched
+            missing = ["spotify"]  # Spotify only; no other platform is searched
         else:
             missing = _missing_platforms(data)
             if recheck and "spotify" not in missing:
