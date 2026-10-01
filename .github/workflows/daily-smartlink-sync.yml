@@ -2,12 +2,12 @@ name: Daily SmartLink Sync
 
 on:
   schedule:
-    # Runs at 03:00 UTC every day. Adjust the hour to whenever you want
-    # — cron time is always UTC regardless of your local timezone.
-    - cron: '0 3 * * *'
+    # Runs at 05:07 UTC every day. Cron time is always UTC.
+    # Minute 7 avoids the busy top-of-the-hour queue on GitHub.
+    - cron: '7 5 * * *'
   workflow_dispatch:
     # Lets you trigger a run manually from the GitHub Actions tab
-    # any time, without waiting for the schedule — useful for testing.
+    # any time, without waiting for the schedule.
 
 jobs:
   sync:
