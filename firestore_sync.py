@@ -12,9 +12,9 @@ Releases that already have 4 or more store links filled in — manual or
 automatic, doesn't matter which — are skipped entirely and never
 considered, even if a couple of platforms are still technically missing.
 Only releases with 3 or fewer filled links get processed at all.
-(Exception: a Boomplay link is NOT counted toward that total — see
-UNCOUNTED_STORES below — so adding the Boomplay search link doesn't make
-a release reach the 4-link cutoff sooner than it did before.)
+(Exception: Boomplay and Amazon Music links are NOT counted toward that
+total — see UNCOUNTED_STORES below — so adding their search links doesn't
+make a release reach the 4-link cutoff sooner than it did before.)
 
 Releases are also given up on after repeated failure: if a release gets
 processed and nothing new gets confirmed for it STALL_THRESHOLD_RUNS
@@ -50,12 +50,12 @@ _db = None
 STALL_THRESHOLD_RUNS = 4
 
 # Store fields that are left out of the "already has 4+ links" count.
-# Boomplay is written as a plain search link (not a verified match), and
-# counting it would push releases to the 4-link cutoff one link earlier
-# than before — which would stop Apple/YouTube/etc. from being searched
-# for releases that still need them. Every other store counts exactly as
-# it always did.
-UNCOUNTED_STORES = {"boomplay"}
+# Boomplay and Amazon Music are written as plain search links (not
+# verified matches), and counting them would push releases to the 4-link
+# cutoff earlier than before — which would stop Apple/YouTube/etc. from
+# being searched for releases that still need them. Every other store
+# counts exactly as it always did.
+UNCOUNTED_STORES = {"boomplay", "amazonMusic"}
 
 
 def init():
@@ -89,7 +89,7 @@ def _filled_count(data: dict) -> int:
     rather than the previous behavior of always processing anything
     with at least one gap.
 
-    Fields in UNCOUNTED_STORES (Boomplay) are not counted."""
+    Fields in UNCOUNTED_STORES (Boomplay, Amazon Music) are not counted."""
     stores = (data.get("smartLink") or {}).get("stores") or {}
     return sum(
         1 for k, v in stores.items()
