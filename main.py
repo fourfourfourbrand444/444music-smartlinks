@@ -72,13 +72,17 @@ SEARCH_LINK_PLATFORMS = {
     "tidal": "https://tidal.com/search?q={query}",
     "audiomack": "https://audiomack.com/search?q={query}",
     "boomplay": "https://www.boomplay.com/search/default/{query}",
+    # Amazon Music's web search page, confirmed from a real search:
+    # https://music.amazon.com/search/Kobe%20Denzil%20Kuacha
+    # Switched on/off with ENABLED_PLATFORMS["amazonMusic"] in config.py.
+    "amazonMusic": "https://music.amazon.com/search/{query}",
 }
 
 # Platforms whose search term sits in the URL PATH rather than after
 # "?q=". A "/" inside an artist/title would break such a URL, so these
 # are encoded with safe="" ("/" becomes %2F). Tidal and Audiomack keep
 # their existing encoding exactly as before.
-PATH_STYLE_SEARCH_LINKS = {"boomplay"}
+PATH_STYLE_SEARCH_LINKS = {"boomplay", "amazonMusic"}
 
 
 def run():
