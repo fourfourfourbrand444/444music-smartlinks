@@ -62,10 +62,23 @@ CONFIDENCE_THRESHOLD = 55.0
 # a search-results page, not a guaranteed-permanent deep link to that
 # exact song — reliable for what's been checked so far, but not the
 # same guarantee as an exact track URL.
+#
+# Boomplay uses the same approach (its search page is
+# https://www.boomplay.com/search/default/<query>). Like the others it
+# is only written when the release has no Boomplay link yet, so a link
+# you entered by hand is never overwritten. It is switched on/off with
+# ENABLED_PLATFORMS["boomplay"] in config.py.
 SEARCH_LINK_PLATFORMS = {
     "tidal": "https://tidal.com/search?q={query}",
     "audiomack": "https://audiomack.com/search?q={query}",
+    "boomplay": "https://www.boomplay.com/search/default/{query}",
 }
+
+# Platforms whose search term sits in the URL PATH rather than after
+# "?q=". A "/" inside an artist/title would break such a URL, so these
+# are encoded with safe="" ("/" becomes %2F). Tidal and Audiomack keep
+# their existing encoding exactly as before.
+PATH_STYLE_SEARCH_LINKS = {"boomplay"}
 
 
 def run():
@@ -178,7 +191,10 @@ def _process(releases, flagged, crashed, get_driver):
             for platform, url_template in SEARCH_LINK_PLATFORMS.items():
                 if platform not in missing:
                     continue
-                query = quote(f"{artist} {title}")
+                if platform in PATH_STYLE_SEARCH_LINKS:
+                    query = quote(f"{artist} {title}", safe="")
+                else:
+                    query = quote(f"{artist} {title}")
                 found[platform] = url_template.format(query=query)
                 print(f"    {platform:<12} search link written — OK (not a verified per-track match)")
 
