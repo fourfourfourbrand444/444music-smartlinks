@@ -70,6 +70,11 @@ ENABLED_PLATFORMS = {
     "youtube": True,      # via YouTube Data API — reliable if key is set
     "tidal": True,         # handled as a deterministic search link now, not scraped
     "amazonMusic": False,  # removed — no scraper, hits login/bot-detection walls, manual only
-    "boomplay": False,     # removed — no scraper, hits login/bot-detection walls, manual only
+    # Boomplay: written as a deterministic search link (same approach as
+    # Tidal/Audiomack) — a link to Boomplay's search page for
+    # "artist title", NOT a verified exact-track link. Only fills a
+    # release that has no Boomplay link yet; a link you entered by hand
+    # is never touched. Set to False to switch this off again.
+    "boomplay": True,
     "audiomack": True,     # handled as a deterministic search link now, not scraped
 }
